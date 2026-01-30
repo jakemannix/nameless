@@ -2,21 +2,23 @@
 
 These tools allow Claude to interact with Letta's persistent memory system,
 including core memory blocks and archival memory.
+
+Uses AsyncLetta client to properly support async tool execution.
 """
 
 from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool  # type: ignore[import-not-found]
-from letta_client import Letta
+from letta_client import AsyncLetta
 
 from nameless.config import get_settings
 
 
-def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | None = None) -> Any:
+def create_letta_mcp_server(letta_client: AsyncLetta | None = None, agent_id: str | None = None) -> Any:
     """Create an MCP server with Letta memory tools.
 
     Args:
-        letta_client: Optional pre-configured Letta client. If not provided,
+        letta_client: Optional pre-configured AsyncLetta client. If not provided,
             creates one from settings.
         agent_id: The Letta agent ID. If not provided, reads from settings.
 
@@ -26,7 +28,7 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
     settings = get_settings()
 
     if letta_client is None:
-        letta_client = Letta(base_url=settings.letta.base_url)
+        letta_client = AsyncLetta(base_url=settings.letta.base_url)
 
     if agent_id is None:
         agent_id = settings.agent.agent_id
@@ -41,7 +43,7 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
     async def get_memory_block(args: dict[str, Any]) -> dict[str, Any]:
         """Retrieve a core memory block from Letta."""
         block_name = args["block_name"]
-        block = _letta.agents.blocks.retrieve(block_name, agent_id=_agent_id)
+        block = await _letta.agents.blocks.retrieve(block_name, agent_id=_agent_id)
         return {"content": [{"type": "text", "text": block.value or ""}]}
 
     @tool("update_memory_block", "Update a core memory block value.", {"block_name": str, "value": str})
@@ -49,7 +51,7 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
         """Update a core memory block in Letta."""
         block_name = args["block_name"]
         value = args["value"]
-        _letta.agents.blocks.update(block_name, agent_id=_agent_id, value=value)
+        await _letta.agents.blocks.update(block_name, agent_id=_agent_id, value=value)
         return {"content": [{"type": "text", "text": f"Updated memory block '{block_name}'"}]}
 
     @tool("search_archival_memory", "Search archival memory for past experiences.", {"query": str, "count": int})
@@ -57,7 +59,7 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
         """Search archival memory using semantic similarity."""
         query = args["query"]
         count = args.get("count", 10)
-        results = _letta.agents.passages.search(_agent_id, query=query, top_k=count)
+        results = await _letta.agents.passages.search(_agent_id, query=query, top_k=count)
         entries = [{"text": r.passage.text, "score": r.score} for r in results]
         return {"content": [{"type": "text", "text": str(entries)}]}
 
@@ -65,13 +67,13 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
     async def insert_archival_memory(args: dict[str, Any]) -> dict[str, Any]:
         """Insert a new entry into archival memory."""
         text = args["text"]
-        _letta.agents.passages.create(_agent_id, text=text)
+        await _letta.agents.passages.create(_agent_id, text=text)
         return {"content": [{"type": "text", "text": "Memory archived successfully"}]}
 
     @tool("list_memory_blocks", "List all available core memory blocks.", {})
     async def list_memory_blocks(args: dict[str, Any]) -> dict[str, Any]:
         """List all core memory blocks."""
-        blocks_list = _letta.agents.blocks.list(_agent_id)
+        blocks_list = await _letta.agents.blocks.list(_agent_id)
         blocks = [{"label": b.label, "value_length": len(b.value) if b.value else 0} for b in blocks_list]
         return {"content": [{"type": "text", "text": str(blocks)}]}
 
@@ -79,7 +81,7 @@ def create_letta_mcp_server(letta_client: Letta | None = None, agent_id: str | N
     async def get_recent_messages(args: dict[str, Any]) -> dict[str, Any]:
         """Get recent messages from recall memory."""
         count = args.get("count", 10)
-        messages = _letta.agents.messages.list(_agent_id, limit=count)
+        messages = await _letta.agents.messages.list(_agent_id, limit=count)
         formatted = []
         for m in messages:
             entry = {"type": type(m).__name__}

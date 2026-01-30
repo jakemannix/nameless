@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # type: ignore[import-not-found]
-from letta_client import Letta
+from letta_client import AsyncLetta
 
 from nameless.config import get_settings
 from nameless.core.tools import create_letta_mcp_server
@@ -44,28 +44,27 @@ class NamelessAgent:
     methods for running conversations and autonomous cycles.
     """
 
-    letta_client: Letta | None = None
     agent_id: str | None = None
     system_prompt: str | None = None
-    _client: ClaudeSDKClient | None = field(default=None, repr=False)
+    _client: AsyncLetta | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         settings = get_settings()
 
-        if self.letta_client is None:
-            self.letta_client = Letta(base_url=settings.letta.base_url)
+        if self._client is None:
+            self._client = AsyncLetta(base_url=settings.letta.base_url)
 
         if self.agent_id is None:
             self.agent_id = settings.agent.agent_id
 
-    def load_persona_from_letta(self) -> str:
+    async def load_persona_from_letta(self) -> str:
         """Load the persona block from Letta to use as system prompt."""
-        if not self.agent_id or not self.letta_client:
-            logger.warning("No agent_id or letta_client configured, using default system prompt")
+        if not self.agent_id or not self._client:
+            logger.warning("No agent_id or client configured, using default system prompt")
             return DEFAULT_SYSTEM_PROMPT
 
         try:
-            block = self.letta_client.agents.blocks.retrieve("persona", agent_id=self.agent_id)
+            block = await self._client.agents.blocks.retrieve("persona", agent_id=self.agent_id)
             if block and block.value:
                 logger.info("Loaded persona from Letta")
                 return block.value
@@ -74,18 +73,12 @@ class NamelessAgent:
 
         return DEFAULT_SYSTEM_PROMPT
 
-    def _build_options(self) -> ClaudeAgentOptions:
+    def _build_options(self, system_prompt: str) -> ClaudeAgentOptions:
         """Build Claude agent options with Letta MCP server."""
-        # Create MCP server with Letta tools
         mcp_server = create_letta_mcp_server(
-            letta_client=self.letta_client,
+            letta_client=self._client,
             agent_id=self.agent_id,
         )
-
-        # Load system prompt from Letta or use provided/default
-        system_prompt = self.system_prompt
-        if system_prompt is None:
-            system_prompt = self.load_persona_from_letta()
 
         return ClaudeAgentOptions(
             system_prompt=system_prompt,
@@ -109,7 +102,12 @@ class NamelessAgent:
         Yields:
             Response messages from the agent.
         """
-        options = self._build_options()
+        # Load persona if not provided
+        system_prompt = self.system_prompt
+        if system_prompt is None:
+            system_prompt = await self.load_persona_from_letta()
+
+        options = self._build_options(system_prompt)
 
         async with ClaudeSDKClient(options=options) as client:
             await client.query(message)
