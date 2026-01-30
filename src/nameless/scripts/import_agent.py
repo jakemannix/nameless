@@ -120,7 +120,7 @@ def import_agent(
     # Use provided URL or fall back to settings
     base_url = target_url or settings.letta.base_url
     if api_key is None:
-        api_key = settings.letta.password
+        api_key = settings.letta.api_key
 
     # Infer passages file if not provided
     if passages_file is None:
@@ -233,7 +233,7 @@ Examples:
     )
     parser.add_argument(
         "--api-key",
-        help="API key for target server (default: from LETTA_PASSWORD env var)",
+        help="API key for target server (default: from LETTA_API_KEY env var)",
     )
     parser.add_argument(
         "-n",

@@ -15,7 +15,7 @@ class LettaConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LETTA_")
 
     base_url: str = Field(default="http://localhost:8283", description="Letta server URL")
-    password: str | None = Field(default=None, description="Letta server password if secured")
+    api_key: str | None = Field(default=None, description="Letta API key for authentication")
 
 
 class AgentConfig(BaseSettings):
