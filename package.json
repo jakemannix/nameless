@@ -1,0 +1,16 @@
+{
+  "name": "nameless-mcp-bridge",
+  "version": "0.1.0",
+  "description": "MCP server bridge for Nameless agent - connects Claude Code SDK to Letta",
+  "private": true,
+  "scripts": {
+    "start:mcp": "npx @letta-ai/letta-mcp-server",
+    "start:mcp:dev": "LETTA_BASE_URL=http://localhost:8283 npx @letta-ai/letta-mcp-server"
+  },
+  "dependencies": {
+    "@letta-ai/letta-mcp-server": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
