@@ -198,11 +198,6 @@ def verify_agent(client: Letta, agent_id: str) -> None:
 
 def main() -> None:
     """CLI entry point for agent import."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
     parser = argparse.ArgumentParser(
         description="Import Nameless agent to Letta",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -219,6 +214,9 @@ Examples:
 
   # Import with explicit passages file
   nameless-import exports/nameless.af --passages exports/nameless_passages.json
+
+  # Debug connection issues
+  nameless-import exports/nameless.af --verbose
         """,
     )
     parser.add_argument("agent_file", type=Path, help="Path to .af agent file")
@@ -253,7 +251,25 @@ Examples:
         action="store_true",
         help="Verify agent after import",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output with full error tracebacks",
+    )
     args = parser.parse_args()
+
+    # Configure logging based on verbosity
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Enable debug logging for HTTP client when verbose
+    if args.verbose:
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("httpcore").setLevel(logging.DEBUG)
 
     if not args.agent_file.exists():
         logger.error(f"Agent file not found: {args.agent_file}")
@@ -284,7 +300,10 @@ Examples:
         print(f"\nAdd to .env: NAMELESS_AGENT_ID={result.agent_id}")
 
     except Exception as e:
-        logger.error(f"Import failed: {e}")
+        if args.verbose:
+            logger.exception(f"Import failed: {e}")
+        else:
+            logger.error(f"Import failed: {e}")
         sys.exit(1)
 
 

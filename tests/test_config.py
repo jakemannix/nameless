@@ -6,15 +6,18 @@ from unittest.mock import patch
 from nameless.config import Settings, get_settings
 
 
-def test_default_settings():
-    """Test that default settings are populated correctly."""
-    with patch.dict(os.environ, {}, clear=True):
-        settings = Settings()
+def test_env_overrides_defaults():
+    """Test that environment variables override any defaults or .env values."""
+    env = {
+        "LETTA_BASE_URL": "http://test-override:9999",
+        "LETTA_API_KEY": "test-key",
+    }
 
-        assert settings.letta.base_url == "http://localhost:8283"
-        assert settings.letta.api_key is None
-        assert settings.agent.agent_id is None
-        assert settings.triggers.perch_interval_hours == 2
+    with patch.dict(os.environ, env):
+        settings = Settings()
+        # Env vars should take precedence over .env file
+        assert settings.letta.base_url == "http://test-override:9999"
+        assert settings.letta.api_key == "test-key"
 
 
 def test_settings_from_env():

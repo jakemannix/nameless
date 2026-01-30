@@ -72,16 +72,17 @@ def export_passages(client: Letta, agent_id: str, output_path: Path) -> int:
 
     all_passages = []
     after_cursor = None
+    limit = 100
 
     # Paginate through all passages
     while True:
-        kwargs: dict = {"limit": 100}
+        kwargs: dict = {"limit": limit}
         if after_cursor:
             kwargs["after"] = after_cursor
 
-        page = client.agents.passages.list(agent_id, **kwargs)
-        passages_list = list(page)
+        passages_list = client.agents.passages.list(agent_id, **kwargs)
 
+        # API returns a list directly
         if not passages_list:
             break
 
@@ -95,9 +96,11 @@ def export_passages(client: Letta, agent_id: str, output_path: Path) -> int:
             }
             all_passages.append(passage_data)
 
-        # Check for more pages
-        if not page.has_next_page():
+        # If we got fewer than limit, we're done
+        if len(passages_list) < limit:
             break
+
+        # Use last passage ID as cursor for next page
         after_cursor = passages_list[-1].id
 
     # Write passages to file
@@ -180,11 +183,6 @@ def export_agent(
 
 def main() -> None:
     """CLI entry point for agent export."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
     parser = argparse.ArgumentParser(
         description="Export Nameless agent from Letta",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -198,6 +196,9 @@ Examples:
 
   # Export to specific directory
   nameless-export agent-123 -o ./backups
+
+  # Debug connection issues
+  nameless-export agent-123 --verbose
         """,
     )
     parser.add_argument("agent_id", help="Letta agent ID to export")
@@ -215,7 +216,25 @@ Examples:
         type=Path,
         help="Output directory for export files (default: ./exports)",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output with full error tracebacks",
+    )
     args = parser.parse_args()
+
+    # Configure logging based on verbosity
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Enable debug logging for HTTP client when verbose
+    if args.verbose:
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("httpcore").setLevel(logging.DEBUG)
 
     try:
         result = export_agent(
@@ -233,7 +252,10 @@ Examples:
             print(f"  Total messages: {result.message_count}")
 
     except Exception as e:
-        logger.error(f"Export failed: {e}")
+        if args.verbose:
+            logger.exception(f"Export failed: {e}")
+        else:
+            logger.error(f"Export failed: {e}")
         sys.exit(1)
 
 
