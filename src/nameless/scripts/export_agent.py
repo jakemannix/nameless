@@ -1,65 +1,181 @@
-"""Export Nameless agent from current Letta instance.
+"""Export Nameless agent from a Letta instance.
 
-Creates an AgentFile that can be imported into the self-hosted Letta server.
+Exports the agent file (.af) which includes:
+- Model configuration
+- Message history (conversation history)
+- System prompt
+- Memory blocks (core memory)
+- Tool rules and definitions
+
+Archival memory (passages) is exported separately since it's not yet
+included in the .af format.
+
+Usage:
+    nameless-export <agent_id> --source-url http://localhost:8283
+    nameless-export <agent_id> --source-url https://api.letta.com --api-key <key>
 """
 
 import argparse
 import json
 import logging
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import httpx
+from letta_client import Letta
 
 from nameless.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-def export_agent(agent_id: str, output_path: Path | None = None) -> Path:
-    """Export an agent from Letta to an AgentFile.
+@dataclass
+class ExportResult:
+    """Result of an agent export operation."""
+
+    agent_file_path: Path
+    passages_file_path: Path
+    agent_id: str
+    passage_count: int
+    message_count: int | None = None
+
+
+def create_letta_client(base_url: str, api_key: str | None = None) -> Letta:
+    """Create a Letta client for the specified server.
+
+    Args:
+        base_url: The Letta server URL
+        api_key: Optional API key for authentication
+
+    Returns:
+        Configured Letta client
+    """
+    kwargs: dict = {"base_url": base_url}
+    if api_key:
+        kwargs["api_key"] = api_key
+    return Letta(**kwargs)
+
+
+def export_passages(client: Letta, agent_id: str, output_path: Path) -> int:
+    """Export all archival memory passages for an agent.
+
+    Args:
+        client: Letta client
+        agent_id: The agent ID
+        output_path: Where to save the passages JSON
+
+    Returns:
+        Number of passages exported
+    """
+    logger.info(f"Exporting archival memory passages for agent {agent_id}")
+
+    all_passages = []
+    after_cursor = None
+
+    # Paginate through all passages
+    while True:
+        kwargs: dict = {"limit": 100}
+        if after_cursor:
+            kwargs["after"] = after_cursor
+
+        page = client.agents.passages.list(agent_id, **kwargs)
+        passages_list = list(page)
+
+        if not passages_list:
+            break
+
+        for p in passages_list:
+            passage_data = {
+                "id": p.id,
+                "text": p.text,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "metadata": p.metadata,
+                "tags": p.tags,
+            }
+            all_passages.append(passage_data)
+
+        # Check for more pages
+        if not page.has_next_page():
+            break
+        after_cursor = passages_list[-1].id
+
+    # Write passages to file
+    with open(output_path, "w") as f:
+        json.dump({"agent_id": agent_id, "passages": all_passages}, f, indent=2)
+
+    logger.info(f"Exported {len(all_passages)} passages to {output_path}")
+    return len(all_passages)
+
+
+def export_agent(
+    agent_id: str,
+    source_url: str | None = None,
+    api_key: str | None = None,
+    output_dir: Path | None = None,
+) -> ExportResult:
+    """Export an agent and its archival memory from Letta.
 
     Args:
         agent_id: The Letta agent ID to export
-        output_path: Where to save the export (default: ./exports/<timestamp>.agent)
+        source_url: Source Letta server URL (default: from settings)
+        api_key: API key for source server (default: from settings)
+        output_dir: Directory for export files (default: ./exports)
 
     Returns:
-        Path to the exported AgentFile
+        ExportResult with paths to exported files
     """
     settings = get_settings()
 
-    if output_path is None:
-        exports_dir = Path("exports")
-        exports_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = exports_dir / f"nameless_{timestamp}.agent"
+    # Use provided URL or fall back to settings
+    base_url = source_url or settings.letta.base_url
+    if api_key is None:
+        api_key = settings.letta.password
 
-    logger.info(f"Exporting agent {agent_id} from {settings.letta.base_url}")
+    # Set up output directory
+    if output_dir is None:
+        output_dir = Path("exports")
+    output_dir.mkdir(exist_ok=True)
 
-    # Build request
-    headers = {}
-    if settings.letta.password:
-        headers["Authorization"] = f"Bearer {settings.letta.password}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    agent_file_path = output_dir / f"nameless_{timestamp}.af"
+    passages_file_path = output_dir / f"nameless_{timestamp}_passages.json"
 
-    # Export endpoint
-    export_url = f"{settings.letta.base_url}/v1/agents/{agent_id}/export"
+    logger.info(f"Exporting agent {agent_id} from {base_url}")
 
-    with httpx.Client(timeout=60.0) as client:
-        response = client.get(export_url, headers=headers)
-        response.raise_for_status()
+    # Create client
+    client = create_letta_client(base_url, api_key)
 
-        agent_data = response.json()
+    # Export agent file (.af)
+    logger.info("Exporting agent file...")
+    agent_file_content = client.agents.export_file(agent_id)
 
-    # Write to file
-    with open(output_path, "w") as f:
-        json.dump(agent_data, f, indent=2)
+    with open(agent_file_path, "w") as f:
+        f.write(agent_file_content)
 
-    logger.info(f"Agent exported to {output_path}")
-    logger.info(f"  - Core memory blocks: {len(agent_data.get('memory', {}).get('blocks', []))}")
-    logger.info(f"  - Tools: {len(agent_data.get('tools', []))}")
+    logger.info(f"Agent file exported to {agent_file_path}")
 
-    return output_path
+    # Parse agent file to get message count
+    message_count = None
+    try:
+        agent_data = json.loads(agent_file_content)
+        messages = agent_data.get("messages", [])
+        message_count = len(messages)
+        logger.info(f"  - Messages: {message_count}")
+        logger.info(f"  - Memory blocks: {len(agent_data.get('memory', {}).get('blocks', []))}")
+    except json.JSONDecodeError:
+        logger.warning("Could not parse agent file for summary")
+
+    # Export archival memory passages
+    passage_count = export_passages(client, agent_id, passages_file_path)
+
+    return ExportResult(
+        agent_file_path=agent_file_path,
+        passages_file_path=passages_file_path,
+        agent_id=agent_id,
+        passage_count=passage_count,
+        message_count=message_count,
+    )
 
 
 def main() -> None:
@@ -69,22 +185,53 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    parser = argparse.ArgumentParser(description="Export Nameless agent from Letta")
+    parser = argparse.ArgumentParser(
+        description="Export Nameless agent from Letta",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Export from local Letta server
+  nameless-export agent-123
+
+  # Export from Letta Cloud
+  nameless-export agent-123 --source-url https://api.letta.com --api-key $LETTA_API_KEY
+
+  # Export to specific directory
+  nameless-export agent-123 -o ./backups
+        """,
+    )
     parser.add_argument("agent_id", help="Letta agent ID to export")
     parser.add_argument(
+        "--source-url",
+        help="Source Letta server URL (default: from LETTA_BASE_URL env var)",
+    )
+    parser.add_argument(
+        "--api-key",
+        help="API key for source server (default: from LETTA_PASSWORD env var)",
+    )
+    parser.add_argument(
         "-o",
-        "--output",
+        "--output-dir",
         type=Path,
-        help="Output path for AgentFile (default: exports/<timestamp>.agent)",
+        help="Output directory for export files (default: ./exports)",
     )
     args = parser.parse_args()
 
     try:
-        output = export_agent(args.agent_id, args.output)
-        print(f"Successfully exported to: {output}")
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
-        sys.exit(1)
+        result = export_agent(
+            args.agent_id,
+            source_url=args.source_url,
+            api_key=args.api_key,
+            output_dir=args.output_dir,
+        )
+
+        print("\nExport complete!")
+        print(f"  Agent file: {result.agent_file_path}")
+        print(f"  Passages:   {result.passages_file_path}")
+        print(f"  Total passages exported: {result.passage_count}")
+        if result.message_count is not None:
+            print(f"  Total messages: {result.message_count}")
+
     except Exception as e:
         logger.error(f"Export failed: {e}")
         sys.exit(1)
