@@ -134,19 +134,25 @@ uv run mypy src/nameless
 
 ## Current Status
 
-**Phase**: Claude Agent SDK integration complete
+**Phase**: Migration infrastructure ready, local Letta setup in progress
 
 **Completed**:
 - Claude Agent SDK as execution layer
 - In-process MCP server with Letta tools
-- Perch time trigger using new architecture
+- Export script working - successfully exported agent from Letta Cloud
+  - 132 messages (Oct 20, Dec 11, Dec 25 2025, Jan 30 2026)
+  - 23 archival passages
+- Fixed config loading (nested pydantic-settings now reads .env properly)
+- letta-mcp-server installed from GitHub (oculairmedia/letta-mcp-server)
+
+**In Progress**:
+- Docker Desktop debugging - daemon returning Internal Server Error, needs restart/investigation
 
 **Next Steps**:
-1. Test export from current Letta Cloud instance
-2. Set up local Letta server via Docker
-3. Import agent and verify memory
-4. Test end-to-end agent loop
-5. Implement Discord/Bluesky triggers
+1. Get Docker Desktop working and start local Letta server
+2. Import agent and verify memory
+3. Test end-to-end agent loop with MCP bridge
+4. Implement Discord/Bluesky triggers
 
 ## Notes
 
