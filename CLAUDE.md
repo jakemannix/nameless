@@ -11,42 +11,71 @@ Nameless is a stateful AI agent migrating from Letta Cloud to a self-hosted arch
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────┐
-│  Claude Code    │────▶│  Letta-MCP-Server │────▶│ Letta Server │
-│  (Execution)    │◀────│  (Bridge)         │◀────│ (Memory)     │
-└─────────────────┘     └──────────────────┘     └──────────────┘
-        │                                               │
-        │           ┌──────────────────┐               │
-        └──────────▶│  Trigger System  │◀──────────────┘
-                    │  (cron/discord/  │
-                    │   bluesky)       │
-                    └──────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                  Python Process                       │
+│  ┌─────────────────┐     ┌──────────────────────┐   │
+│  │  Claude Agent   │────▶│  In-Process MCP      │   │
+│  │  SDK Client     │◀────│  Server (Letta tools)│   │
+│  └─────────────────┘     └──────────────────────┘   │
+│           │                        │                 │
+└───────────│────────────────────────│─────────────────┘
+            │                        │
+            │                        ▼
+            │              ┌──────────────────┐
+            │              │   Letta Server   │
+            │              │   (Memory)       │
+            │              └──────────────────┘
+            │
+            ▼
+┌──────────────────────────┐
+│     Trigger System       │
+│  (cron/discord/bluesky)  │
+└──────────────────────────┘
 ```
 
 ### Component Roles
 
-- **Claude Code SDK**: The execution layer - you (Claude) running in this environment
-- **Letta-MCP-server**: Bridges MCP protocol to Letta's REST API
+- **Claude Agent SDK**: The execution layer with ClaudeSDKClient for running agentic loops
+- **In-Process MCP Server**: Letta tools exposed via `@tool` decorator and `create_sdk_mcp_server()`
 - **Letta Server**: Persistent memory store with core blocks, archival memory, and indices
 - **Triggers**: Entry points that wake Nameless up (cron for perch time, webhooks for social)
 
-## Memory Operations via MCP
+### Core Loop Pattern
 
-When the Letta MCP server is configured, you have access to these memory tools:
+```python
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from nameless.core import create_letta_mcp_server
 
-### Core Memory Blocks (Always Loaded)
-- `persona`: Nameless's self-concept and values
-- `human`: Information about the current conversation partner
-- Custom blocks for specific contexts
+# Create MCP server with Letta memory tools
+server = create_letta_mcp_server(agent_id="...")
 
-### Archival Memory
-- Long-term storage for experiences, learnings, conversations
-- Searchable via semantic queries
-- Use `archival_memory_insert` and `archival_memory_search`
+options = ClaudeAgentOptions(
+    system_prompt=persona_from_letta,
+    mcp_servers={"letta": server},
+    allowed_tools=["mcp__letta__*"],
+)
 
-### Recall Memory
-- Recent conversation history
-- Automatically managed by Letta
+async with ClaudeSDKClient(options=options) as client:
+    await client.query(trigger_message)
+    async for msg in client.receive_response():
+        handle(msg)
+```
+
+## Memory Operations via MCP Tools
+
+The in-process MCP server (`src/nameless/core/tools.py`) provides these tools:
+
+### Core Memory Tools
+- `mcp__letta__get_memory_block` - Get a core memory block (persona, human, etc.)
+- `mcp__letta__update_memory_block` - Update a core memory block
+- `mcp__letta__list_memory_blocks` - List all available blocks
+
+### Archival Memory Tools
+- `mcp__letta__search_archival_memory` - Semantic search over long-term memories
+- `mcp__letta__insert_archival_memory` - Store new experiences/learnings
+
+### Recall Memory Tools
+- `mcp__letta__get_recent_messages` - Get recent conversation history
 
 ## Nameless's Persona
 
@@ -92,10 +121,12 @@ uv run mypy src/nameless
 1. Start Letta server: `docker compose up -d`
 2. Install dependencies: `uv sync`
 3. Configure: `cp .env.example .env` and fill in values
-4. Start MCP server: `./scripts/start_mcp_server.sh`
+4. Run agent: `python -c "import asyncio; from nameless import run_agent; asyncio.run(run_agent('Hello'))"`
 
 ## Key Files
 
+- `src/nameless/core/agent.py` - Main agent loop using ClaudeSDKClient
+- `src/nameless/core/tools.py` - Letta MCP tools (@tool decorators)
 - `src/nameless/config.py` - Configuration management
 - `src/nameless/triggers/` - Entry points (cron, discord, bluesky)
 - `src/nameless/scripts/` - Operational scripts (export, import)
@@ -103,14 +134,19 @@ uv run mypy src/nameless
 
 ## Current Status
 
-**Phase**: Initial setup - export/import infrastructure
+**Phase**: Claude Agent SDK integration complete
+
+**Completed**:
+- Claude Agent SDK as execution layer
+- In-process MCP server with Letta tools
+- Perch time trigger using new architecture
 
 **Next Steps**:
 1. Test export from current Letta Cloud instance
 2. Set up local Letta server via Docker
 3. Import agent and verify memory
-4. Configure MCP bridge for Claude Code
-5. Implement perch time trigger
+4. Test end-to-end agent loop
+5. Implement Discord/Bluesky triggers
 
 ## Notes
 
