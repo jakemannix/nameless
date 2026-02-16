@@ -401,7 +401,7 @@ class NamelessAgent:
                 "mcp__letta__get_recent_messages",
             ],
             # disallowed_tools blocks from the default base set
-            disallowed_tools=["Task", "Agent", "TaskOutput"],
+            disallowed_tools=["Task", "Agent", "TaskOutput", "mcp__claude_ai_*"],
             # Load all MCP tools eagerly — only 6 Letta tools, well within
             # context budget. Avoids requiring ToolSearch for primary tools.
             env={"ENABLE_TOOL_SEARCH": "false"},

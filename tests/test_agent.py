@@ -317,4 +317,4 @@ class TestBuildOptions:
                 "mcp__letta__get_recent_messages",
             ]
             assert options.allowed_tools == expected_allowed
-            assert options.disallowed_tools == ["Task", "Agent", "TaskOutput"]
+            assert options.disallowed_tools == ["Task", "Agent", "TaskOutput", "mcp__claude_ai_*"]
