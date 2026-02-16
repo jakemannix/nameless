@@ -1,350 +1,280 @@
-"""Tests for core tools module with accurate Letta API mocks.
+"""Tests for Letta MCP tools that invoke the actual tool handlers.
 
-These mocks are based on letta-client 1.7.6 types:
-- BlockResponse: Core memory block with id, value, label, etc.
-- Passage: Archival memory entry with text, created_at, etc.
-- PassageSearchResponseItem: Search result with passage and score
-- Message types: AssistantMessage, UserMessage, etc. with content, date, message_type
+Each test captures the SdkMcpTool objects created by create_letta_mcp_server,
+invokes their .handler() with test arguments, and verifies both:
+1. The MCP response format ({"content": [{"type": "text", "text": ...}]})
+2. That the underlying AsyncLetta mock was called with correct arguments
 """
 
-import datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# Import the actual Letta types for accurate mocking
-from letta_client.types import BlockResponse, Passage
-from letta_client.types.agents.assistant_message import AssistantMessage
-from letta_client.types.agents.user_message import UserMessage
-from letta_client.types.passage_search_response import PassageSearchResponseItem
+from tests.conftest import capture_tools, make_block_response, make_passage
 
 
-def make_block_response(
-    block_id: str = "block-123",
-    label: str = "persona",
-    value: str = "I am Nameless, an AI agent.",
-) -> BlockResponse:
-    """Create a realistic BlockResponse matching letta-client 1.7.6."""
-    return BlockResponse(
-        id=block_id,
-        value=value,
-        label=label,
-        description="Core memory block",
-        is_template=False,
-        read_only=False,
-        limit=5000,
-        metadata=None,
-        tags=None,
-        created_by_id=None,
-        last_updated_by_id=None,
-        project_id="project-456",
-        base_template_id=None,
-        template_id=None,
-        template_name=None,
-        deployment_id=None,
-        entity_id=None,
-        hidden=False,
-        preserve_on_migration=False,
-    )
-
-
-def make_passage(
-    passage_id: str = "passage-789",
-    text: str = "A memory about something important.",
-    created_at: datetime.datetime | None = None,
-) -> Passage:
-    """Create a realistic Passage matching letta-client 1.7.6."""
-    return Passage(
-        text=text,
-        id=passage_id,
-        created_at=created_at or datetime.datetime(2024, 1, 15, 10, 30, 0),
-        embedding=None,
-        embedding_config=None,
-        archive_id="archive-001",
-        file_id=None,
-        file_name=None,
-        source_id=None,
-        metadata=None,
-        tags=None,
-        is_deleted=False,
-        created_by_id=None,
-        last_updated_by_id=None,
-        updated_at=None,
-    )
-
-
-def make_passage_search_result(
-    passage: Passage | None = None,
-    score: float = 0.95,
-) -> PassageSearchResponseItem:
-    """Create a realistic PassageSearchResponseItem."""
-    return PassageSearchResponseItem(
-        passage=passage or make_passage(),
-        score=score,
-        metadata=None,
-    )
-
-
-def make_assistant_message(
-    msg_id: str = "msg-001",
-    content: str = "Hello, I'm here to help.",
-    date: datetime.datetime | None = None,
-) -> AssistantMessage:
-    """Create a realistic AssistantMessage matching letta-client 1.7.6."""
-    return AssistantMessage(
-        id=msg_id,
-        content=content,
-        date=date or datetime.datetime(2024, 1, 15, 11, 0, 0),
-        message_type="assistant_message",
-        is_err=False,
-        name=None,
-        otid=None,
-        run_id="run-123",
-        sender_id=None,
-        seq_id=1,
-        step_id="step-001",
-    )
-
-
-def make_user_message(
-    msg_id: str = "msg-002",
-    content: str = "Hello Nameless!",
-    date: datetime.datetime | None = None,
-) -> UserMessage:
-    """Create a realistic UserMessage matching letta-client 1.7.6."""
-    return UserMessage(
-        id=msg_id,
-        content=content,
-        date=date or datetime.datetime(2024, 1, 15, 10, 59, 0),
-        message_type="user_message",
-        is_err=False,
-        name=None,
-        otid=None,
-        run_id="run-123",
-        sender_id=None,
-        seq_id=0,
-        step_id="step-000",
-    )
-
-
-class MockSyncArrayPage(list):
-    """Mock for letta_client.pagination.SyncArrayPage that behaves like a list."""
-
-    def __init__(self, items: list[Any]):
-        super().__init__(items)
-
-    def has_next_page(self) -> bool:
-        return False
-
-
-class TestCreateLettaMcpServer:
+class TestCreateServer:
     """Tests for create_letta_mcp_server function."""
 
     def test_requires_agent_id(self) -> None:
-        """Test that create_letta_mcp_server raises if no agent_id provided."""
+        """Raises ValueError when no agent_id is provided or configured."""
         from nameless.core.tools import create_letta_mcp_server
 
-        mock_letta = MagicMock()
+        mock_client = AsyncMock()
 
         with patch("nameless.core.tools.get_settings") as mock_settings:
             mock_settings.return_value.agent.agent_id = None
-
             with pytest.raises(ValueError, match="No agent_id provided"):
-                create_letta_mcp_server(letta_client=mock_letta)
+                create_letta_mcp_server(letta_client=mock_client)
 
-    def test_creates_server_with_tools(self) -> None:
-        """Test that create_letta_mcp_server returns a server with tools."""
-        from nameless.core.tools import create_letta_mcp_server
-
-        mock_letta = MagicMock()
-
-        with patch("nameless.core.tools.get_settings") as mock_settings:
-            mock_settings.return_value.agent.agent_id = "agent-123"
-            mock_settings.return_value.letta.base_url = "http://localhost:8283"
-
-            server = create_letta_mcp_server(letta_client=mock_letta, agent_id="agent-123")
-
-            # Server should be created (exact type depends on claude_agent_sdk)
-            assert server is not None
+    def test_creates_six_tools(self, tool_map: dict[str, Any]) -> None:
+        """Server should register exactly 6 tools."""
+        expected_names = {
+            "get_memory_block",
+            "update_memory_block",
+            "search_archival_memory",
+            "insert_archival_memory",
+            "list_memory_blocks",
+            "get_recent_messages",
+        }
+        assert set(tool_map.keys()) == expected_names
 
 
 class TestGetMemoryBlock:
-    """Tests for get_memory_block tool."""
+    """Tests for the get_memory_block tool handler."""
 
     @pytest.mark.asyncio
-    async def test_retrieves_block_by_label(self) -> None:
-        """Test that get_memory_block calls Letta API correctly."""
-        from nameless.core.tools import create_letta_mcp_server
-
-        mock_letta = MagicMock()
+    async def test_returns_block_value(self, mock_letta: AsyncMock) -> None:
+        """Handler returns the block's value as text content."""
         mock_letta.agents.blocks.retrieve.return_value = make_block_response(
-            label="persona",
-            value="I am Nameless, exploring questions of identity.",
+            label="persona", value="I am Nameless, exploring identity."
         )
+        tools = capture_tools(mock_letta)
 
-        with patch("nameless.core.tools.get_settings") as mock_settings:
-            mock_settings.return_value.agent.agent_id = "agent-123"
+        result = await tools["get_memory_block"].handler({"block_name": "persona"})
 
-            # Create server to get tool functions
-            create_letta_mcp_server(letta_client=mock_letta, agent_id="agent-123")
+        assert result == {"content": [{"type": "text", "text": "I am Nameless, exploring identity."}]}
 
-            # Directly test the Letta API call pattern
-            result = mock_letta.agents.blocks.retrieve("persona", agent_id="agent-123")
+    @pytest.mark.asyncio
+    async def test_empty_value_returns_empty_string(self, mock_letta: AsyncMock) -> None:
+        """Handler returns empty string when block value is empty."""
+        mock_letta.agents.blocks.retrieve.return_value = make_block_response(
+            label="persona", value=""
+        )
+        tools = capture_tools(mock_letta)
 
-            assert result.value == "I am Nameless, exploring questions of identity."
-            assert result.label == "persona"
-            mock_letta.agents.blocks.retrieve.assert_called_once_with(
-                "persona", agent_id="agent-123"
-            )
+        result = await tools["get_memory_block"].handler({"block_name": "persona"})
+
+        assert result["content"][0]["text"] == ""
+
+    @pytest.mark.asyncio
+    async def test_calls_retrieve_correctly(self, mock_letta: AsyncMock) -> None:
+        """Handler passes block_name and agent_id to Letta retrieve."""
+        tools = capture_tools(mock_letta, agent_id="agent-abc")
+
+        await tools["get_memory_block"].handler({"block_name": "human"})
+
+        mock_letta.agents.blocks.retrieve.assert_awaited_once_with("human", agent_id="agent-abc")
 
 
 class TestUpdateMemoryBlock:
-    """Tests for update_memory_block tool."""
+    """Tests for the update_memory_block tool handler."""
 
     @pytest.mark.asyncio
-    async def test_updates_block_value(self) -> None:
-        """Test that update_memory_block calls Letta API correctly."""
-        mock_letta = MagicMock()
-        mock_letta.agents.blocks.update.return_value = make_block_response(
-            label="persona",
-            value="Updated persona text.",
-        )
+    async def test_returns_confirmation(self, mock_letta: AsyncMock) -> None:
+        """Handler returns a confirmation message with the block name."""
+        tools = capture_tools(mock_letta)
 
-        # Test the API call pattern directly
-        mock_letta.agents.blocks.update(
-            "persona",
-            agent_id="agent-123",
-            value="Updated persona text.",
-        )
+        result = await tools["update_memory_block"].handler({"block_name": "persona", "value": "New value"})
 
-        mock_letta.agents.blocks.update.assert_called_once_with(
-            "persona",
-            agent_id="agent-123",
-            value="Updated persona text.",
+        assert result == {"content": [{"type": "text", "text": "Updated memory block 'persona'"}]}
+
+    @pytest.mark.asyncio
+    async def test_calls_update_correctly(self, mock_letta: AsyncMock) -> None:
+        """Handler passes block_name, agent_id, and value to Letta update."""
+        tools = capture_tools(mock_letta, agent_id="agent-xyz")
+
+        await tools["update_memory_block"].handler({"block_name": "human", "value": "Jake likes coffee"})
+
+        mock_letta.agents.blocks.update.assert_awaited_once_with(
+            "human", agent_id="agent-xyz", value="Jake likes coffee"
         )
 
 
 class TestSearchArchivalMemory:
-    """Tests for search_archival_memory tool."""
+    """Tests for the search_archival_memory tool handler.
+
+    The tool tries semantic search first (agents.passages.search), then
+    falls back to text-based search (agents.passages.list) on older servers.
+    """
 
     @pytest.mark.asyncio
-    async def test_searches_with_query(self) -> None:
-        """Test that search_archival_memory calls Letta API correctly."""
-        mock_letta = MagicMock()
-
-        # Create realistic search results
-        search_results = [
-            make_passage_search_result(
-                passage=make_passage(
-                    passage_id="p1",
-                    text="Memory about exploring identity.",
-                    created_at=datetime.datetime(2024, 1, 10, 9, 0, 0),
-                ),
-                score=0.92,
-            ),
-            make_passage_search_result(
-                passage=make_passage(
-                    passage_id="p2",
-                    text="Reflection on what it means to be an AI.",
-                    created_at=datetime.datetime(2024, 1, 12, 14, 30, 0),
-                ),
-                score=0.87,
-            ),
+    async def test_uses_semantic_search_when_available(self, mock_letta: AsyncMock) -> None:
+        """Handler uses passages.search (semantic) when the endpoint exists."""
+        # Set up semantic search to succeed
+        search_result = AsyncMock()
+        search_result.results = [
+            AsyncMock(content="Semantic result 1", id="s1"),
+            AsyncMock(content="Semantic result 2", id="s2"),
         ]
-        mock_letta.agents.passages.search.return_value = search_results
+        mock_letta.agents.passages.search.return_value = search_result
+        tools = capture_tools(mock_letta, agent_id="agent-semantic")
 
-        # Test the API call pattern
-        results = mock_letta.agents.passages.search(
-            "agent-123",
-            query="identity",
-            top_k=10,
-        )
+        result = await tools["search_archival_memory"].handler({"query": "identity", "count": 3})
 
-        assert len(results) == 2
-        assert results[0].passage.text == "Memory about exploring identity."
-        assert results[0].score == 0.92
-        mock_letta.agents.passages.search.assert_called_once_with(
-            "agent-123",
-            query="identity",
-            top_k=10,
+        text = result["content"][0]["text"]
+        assert "Semantic result 1" in text
+        assert "Semantic result 2" in text
+        mock_letta.agents.passages.search.assert_awaited_once_with(
+            "agent-semantic", query="identity", top_k=3,
         )
+        # Text-based fallback should NOT have been called
+        mock_letta.agents.passages.list.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_text_search(self, mock_letta: AsyncMock) -> None:
+        """Handler falls back to passages.list (text) when semantic search fails."""
+        # Make semantic search fail (e.g. server doesn't support it)
+        mock_letta.agents.passages.search.side_effect = Exception("405 Method Not Allowed")
+        mock_letta.agents.passages.list.return_value = [
+            make_passage(passage_id="p1", text="First memory"),
+            make_passage(passage_id="p2", text="Second memory"),
+        ]
+        tools = capture_tools(mock_letta)
+
+        result = await tools["search_archival_memory"].handler({"query": "memories", "count": 5})
+
+        text = result["content"][0]["text"]
+        assert "First memory" in text
+        assert "Second memory" in text
+
+    @pytest.mark.asyncio
+    async def test_default_count_is_10(self, mock_letta: AsyncMock) -> None:
+        """Handler defaults to top_k/limit=10 when count not provided."""
+        mock_letta.agents.passages.search.side_effect = Exception("not available")
+        tools = capture_tools(mock_letta, agent_id="agent-def")
+
+        await tools["search_archival_memory"].handler({"query": "test"})
+
+        mock_letta.agents.passages.list.assert_awaited_once_with("agent-def", search="test", limit=10)
+
+    @pytest.mark.asyncio
+    async def test_text_fallback_calls_list_correctly(self, mock_letta: AsyncMock) -> None:
+        """Fallback passes agent_id, search query, and limit to passages.list."""
+        mock_letta.agents.passages.search.side_effect = Exception("not available")
+        tools = capture_tools(mock_letta, agent_id="agent-search")
+
+        await tools["search_archival_memory"].handler({"query": "identity", "count": 3})
+
+        mock_letta.agents.passages.list.assert_awaited_once_with("agent-search", search="identity", limit=3)
 
 
 class TestInsertArchivalMemory:
-    """Tests for insert_archival_memory tool."""
+    """Tests for the insert_archival_memory tool handler."""
 
     @pytest.mark.asyncio
-    async def test_inserts_passage(self) -> None:
-        """Test that insert_archival_memory calls Letta API correctly."""
-        mock_letta = MagicMock()
-        mock_letta.agents.passages.create.return_value = make_passage(
-            text="A new memory to archive.",
-        )
+    async def test_returns_success_message(self, mock_letta: AsyncMock) -> None:
+        """Handler returns a success confirmation."""
+        tools = capture_tools(mock_letta)
 
-        # Test the API call pattern
-        mock_letta.agents.passages.create(
-            "agent-123",
-            text="A new memory to archive.",
-        )
+        result = await tools["insert_archival_memory"].handler({"text": "A new insight"})
 
-        mock_letta.agents.passages.create.assert_called_once_with(
-            "agent-123",
-            text="A new memory to archive.",
+        assert result == {"content": [{"type": "text", "text": "Memory archived successfully"}]}
+
+    @pytest.mark.asyncio
+    async def test_calls_archive_create_correctly(self, mock_letta: AsyncMock) -> None:
+        """Handler uses archives.passages.create when archive_id is resolvable."""
+        tools = capture_tools(mock_letta, agent_id="agent-ins")
+
+        await tools["insert_archival_memory"].handler({"text": "Something to remember"})
+
+        # Should use archives path (archive_id resolved from mock passage)
+        mock_letta.archives.passages.create.assert_awaited_once_with(
+            "archive-001", text="Something to remember"
         )
 
 
 class TestListMemoryBlocks:
-    """Tests for list_memory_blocks tool."""
+    """Tests for the list_memory_blocks tool handler."""
 
     @pytest.mark.asyncio
-    async def test_lists_all_blocks(self) -> None:
-        """Test that list_memory_blocks calls Letta API correctly."""
-        mock_letta = MagicMock()
+    async def test_returns_block_summaries(self, mock_letta: AsyncMock) -> None:
+        """Handler returns label and value_length for each block."""
+        mock_letta.agents.blocks.list.return_value = [
+            make_block_response(label="persona", value="Short"),
+            make_block_response(label="human", value="A longer description here"),
+        ]
+        tools = capture_tools(mock_letta)
 
-        # Create mock paginated response
-        blocks = MockSyncArrayPage([
-            make_block_response(block_id="b1", label="persona", value="I am Nameless."),
-            make_block_response(block_id="b2", label="human", value="Jake is a technical fellow."),
-        ])
-        mock_letta.agents.blocks.list.return_value = blocks
+        result = await tools["list_memory_blocks"].handler({})
 
-        # Test the API call pattern
-        result = mock_letta.agents.blocks.list("agent-123")
+        text = result["content"][0]["text"]
+        assert "persona" in text
+        assert "human" in text
 
-        assert len(result) == 2
-        assert result[0].label == "persona"
-        assert result[1].label == "human"
-        mock_letta.agents.blocks.list.assert_called_once_with("agent-123")
+    @pytest.mark.asyncio
+    async def test_includes_value_lengths(self, mock_letta: AsyncMock) -> None:
+        """Handler includes the character count of each block's value."""
+        mock_letta.agents.blocks.list.return_value = [
+            make_block_response(label="test", value="12345"),
+        ]
+        tools = capture_tools(mock_letta)
+
+        result = await tools["list_memory_blocks"].handler({})
+
+        text = result["content"][0]["text"]
+        assert "'value_length': 5" in text or '"value_length": 5' in text
+
+    @pytest.mark.asyncio
+    async def test_calls_list_correctly(self, mock_letta: AsyncMock) -> None:
+        """Handler passes agent_id to Letta blocks.list."""
+        tools = capture_tools(mock_letta, agent_id="agent-list")
+
+        await tools["list_memory_blocks"].handler({})
+
+        mock_letta.agents.blocks.list.assert_awaited_once_with("agent-list")
 
 
 class TestGetRecentMessages:
-    """Tests for get_recent_messages tool."""
+    """Tests for the get_recent_messages tool handler."""
 
     @pytest.mark.asyncio
-    async def test_gets_messages_with_limit(self) -> None:
-        """Test that get_recent_messages calls Letta API correctly."""
-        mock_letta = MagicMock()
+    async def test_returns_formatted_messages(self, mock_letta: AsyncMock) -> None:
+        """Handler returns messages with type, content, and date fields."""
+        tools = capture_tools(mock_letta)
 
-        # Create mock paginated response with different message types
-        messages = MockSyncArrayPage([
-            make_user_message(
-                msg_id="m1",
-                content="Hello Nameless!",
-                date=datetime.datetime(2024, 1, 15, 10, 0, 0),
-            ),
-            make_assistant_message(
-                msg_id="m2",
-                content="Hello! How can I help you today?",
-                date=datetime.datetime(2024, 1, 15, 10, 0, 5),
-            ),
-        ])
-        mock_letta.agents.messages.list.return_value = messages
+        result = await tools["get_recent_messages"].handler({"count": 5})
 
-        # Test the API call pattern
-        result = mock_letta.agents.messages.list("agent-123", limit=10)
+        text = result["content"][0]["text"]
+        assert "UserMessage" in text
+        assert "AssistantMessage" in text
+        assert "Hello Nameless!" in text
 
-        assert len(result) == 2
-        assert result[0].message_type == "user_message"
-        assert result[1].message_type == "assistant_message"
-        mock_letta.agents.messages.list.assert_called_once_with("agent-123", limit=10)
+    @pytest.mark.asyncio
+    async def test_truncates_long_content(self, mock_letta: AsyncMock) -> None:
+        """Handler truncates message content to 500 characters."""
+        from tests.conftest import make_assistant_message
+
+        long_content = "x" * 1000
+        mock_letta.agents.messages.list.return_value = [
+            make_assistant_message(content=long_content),
+        ]
+        tools = capture_tools(mock_letta)
+
+        result = await tools["get_recent_messages"].handler({"count": 1})
+
+        text = result["content"][0]["text"]
+        # The content field within the formatted dict should be truncated to 500 chars
+        # str(m.content)[:500] means the content string is at most 500 chars
+        assert len(long_content[:500]) == 500
+        assert ("x" * 501) not in text
+
+    @pytest.mark.asyncio
+    async def test_default_count_is_10(self, mock_letta: AsyncMock) -> None:
+        """Handler defaults to limit=10 when count not provided."""
+        tools = capture_tools(mock_letta, agent_id="agent-msg")
+
+        await tools["get_recent_messages"].handler({})
+
+        mock_letta.agents.messages.list.assert_awaited_once_with("agent-msg", limit=10)

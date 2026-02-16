@@ -73,3 +73,4 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["integration: tests requiring a running Letta server at localhost:8283"]

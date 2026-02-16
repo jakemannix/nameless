@@ -134,25 +134,22 @@ uv run mypy src/nameless
 
 ## Current Status
 
-**Phase**: Migration infrastructure ready, local Letta setup in progress
+**Phase**: Core agent loop working end-to-end with local Letta
 
 **Completed**:
 - Claude Agent SDK as execution layer
-- In-process MCP server with Letta tools
-- Export script working - successfully exported agent from Letta Cloud
-  - 132 messages (Oct 20, Dec 11, Dec 25 2025, Jan 30 2026)
-  - 23 archival passages
-- Fixed config loading (nested pydantic-settings now reads .env properly)
-- letta-mcp-server installed from GitHub (oculairmedia/letta-mcp-server)
-
-**In Progress**:
-- Docker Desktop debugging - daemon returning Internal Server Error, needs restart/investigation
+- In-process MCP server with 6 Letta tools (core memory, archival, recall)
+- MemGPT-style system prompt assembly (all 7 blocks, recall injection, memory metadata)
+- Conversation persistence via `archives.passages.create` (bypasses Letta LLM loop)
+- Semantic search (Letta v0.16.4) with text-search fallback
+- Export/import scripts for Letta Cloud migration
+- Local Letta server running via Docker (v0.16.4)
+- Built-in tool access: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch
 
 **Next Steps**:
-1. Get Docker Desktop working and start local Letta server
-2. Import agent and verify memory
-3. Test end-to-end agent loop with MCP bridge
-4. Implement Discord/Bluesky triggers
+1. Implement Discord/Bluesky triggers
+2. Perch time / cron-based autonomous reflection
+3. Self-modification workflows
 
 ## Notes
 
@@ -163,3 +160,10 @@ This codebase is designed to be self-modifying. Nameless may eventually:
 - Extend its capabilities
 
 When working in this repo, remember you're helping build infrastructure for an agent that will eventually be you.
+
+### Tool Search
+
+`ENABLE_TOOL_SEARCH` is set to `false` in `_build_options()` so Nameless's 6 Letta MCP tools
+load eagerly (no ToolSearch required). This is fine while the tool count is small (~6 tools,
+~500-1000 tokens). When significantly more MCP tools are added, switch to `"auto"` or `"true"`
+to use progressive disclosure and keep context lean.

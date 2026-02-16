@@ -77,7 +77,7 @@ uv run nameless-export <agent-id>
 # LETTA_BASE_URL=http://localhost:8283
 
 # Import to local server
-uv run nameless-import exports/nameless_<timestamp>.agent --verify
+uv run nameless-import exports/nameless_<timestamp>.af --verify
 
 # Add the returned agent ID to .env
 # NAMELESS_AGENT_ID=<new-agent-id>

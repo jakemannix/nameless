@@ -6,7 +6,6 @@ services:
       - "8283:8283"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - letta_data:/root/.letta
     restart: unless-stopped
