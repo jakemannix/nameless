@@ -14,13 +14,55 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # type: ignore[import-not-found]
+from claude_agent_sdk import (  # type: ignore[import-not-found]
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 from letta_client import AsyncLetta
 
 from nameless.config import get_settings
 from nameless.core.tools import create_letta_mcp_server
 
 logger = logging.getLogger(__name__)
+
+# Tools Nameless is allowed to use without prompting
+APPROVED_TOOLS: set[str] = {
+    # Letta memory tools (MCP)
+    "mcp__letta__get_memory_block",
+    "mcp__letta__update_memory_block",
+    "mcp__letta__search_archival_memory",
+    "mcp__letta__insert_archival_memory",
+    "mcp__letta__list_memory_blocks",
+    "mcp__letta__get_recent_messages",
+    # File operations
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Glob",
+    "Grep",
+    # Shell
+    "Bash",
+    # Web access
+    "WebSearch",
+    "WebFetch",
+}
+
+
+async def _check_tool_permission(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    context: ToolPermissionContext,
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Approve tools in APPROVED_TOOLS, deny everything else."""
+    if tool_name in APPROVED_TOOLS:
+        return PermissionResultAllow()
+    logger.warning("Denied tool call: %s", tool_name)
+    return PermissionResultDeny(message=f"Tool '{tool_name}' is not approved for Nameless")
+
 
 # Ordered list of memory block labels, matching Letta's native assembly
 BLOCK_ORDER = ["concepts", "human", "methods", "observations", "projects", "questions", "persona"]
@@ -405,6 +447,8 @@ class NamelessAgent:
             # Load all MCP tools eagerly — only 6 Letta tools, well within
             # context budget. Avoids requiring ToolSearch for primary tools.
             env={"ENABLE_TOOL_SEARCH": "false"},
+            # Programmatic permission: approve APPROVED_TOOLS, deny all else
+            can_use_tool=_check_tool_permission,
         )
 
     async def run(self, message: str) -> AsyncIterator[dict[str, Any]]:

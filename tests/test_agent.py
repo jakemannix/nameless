@@ -11,10 +11,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nameless.core.agent import (
+    APPROVED_TOOLS,
     BASE_INSTRUCTIONS,
     BLOCK_ORDER,
     FALLBACK_SYSTEM_PROMPT,
     NamelessAgent,
+    _check_tool_permission,
 )
 from tests.conftest import (
     make_assistant_message,
@@ -318,3 +320,50 @@ class TestBuildOptions:
             ]
             assert options.allowed_tools == expected_allowed
             assert options.disallowed_tools == ["Task", "Agent", "TaskOutput", "mcp__claude_ai_*"]
+            assert options.can_use_tool is not None
+
+
+class TestToolPermissions:
+    """Tests for the can_use_tool permission callback."""
+
+    @pytest.mark.asyncio
+    async def test_approves_letta_tools(self) -> None:
+        """All 6 Letta MCP tools are approved."""
+        from claude_agent_sdk import ToolPermissionContext
+
+        ctx = ToolPermissionContext()
+        for tool in [
+            "mcp__letta__get_memory_block",
+            "mcp__letta__search_archival_memory",
+            "mcp__letta__insert_archival_memory",
+        ]:
+            result = await _check_tool_permission(tool, {}, ctx)
+            assert result.behavior == "allow", f"{tool} should be approved"
+
+    @pytest.mark.asyncio
+    async def test_approves_builtin_tools(self) -> None:
+        """Built-in tools (Read, Write, Bash, etc.) are approved."""
+        from claude_agent_sdk import ToolPermissionContext
+
+        ctx = ToolPermissionContext()
+        for tool in ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"]:
+            result = await _check_tool_permission(tool, {}, ctx)
+            assert result.behavior == "allow", f"{tool} should be approved"
+
+    @pytest.mark.asyncio
+    async def test_denies_unapproved_tools(self) -> None:
+        """Tools not in APPROVED_TOOLS are denied."""
+        from claude_agent_sdk import ToolPermissionContext
+
+        ctx = ToolPermissionContext()
+        for tool in ["Task", "Agent", "mcp__claude_ai_Figma__get_screenshot", "NotebookEdit"]:
+            result = await _check_tool_permission(tool, {}, ctx)
+            assert result.behavior == "deny", f"{tool} should be denied"
+
+    def test_approved_tools_set_matches_expectations(self) -> None:
+        """APPROVED_TOOLS contains exactly the expected tools."""
+        assert "Read" in APPROVED_TOOLS
+        assert "Bash" in APPROVED_TOOLS
+        assert "mcp__letta__get_memory_block" in APPROVED_TOOLS
+        assert "Task" not in APPROVED_TOOLS
+        assert "Agent" not in APPROVED_TOOLS
