@@ -145,11 +145,20 @@ uv run mypy src/nameless
 - Export/import scripts for Letta Cloud migration
 - Local Letta server running via Docker (v0.16.4)
 - Built-in tool access: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch
+- Perch time / cron-based autonomous reflection (first successful cycle Feb 17, 2026)
+- System CLI path for OAuth auth (`shutil.which("claude")` in `_build_options()`)
+- Interactive chat with `--verbose` tool I/O and Ctrl-C interrupt handling
 
 **Next Steps**:
-1. Implement Discord/Bluesky triggers
-2. Perch time / cron-based autonomous reflection
-3. Self-modification workflows
+1. Subconscious / inner monologue prompt design (see `docs/design-notes.md`)
+2. Perch queue convention (`[perch-queue]` items processed during cron cycles)
+3. Discord/Bluesky triggers
+4. Self-modification workflows
+
+## Design Documents
+
+- **`docs/design-notes.md`** — Active design threads, architecture decisions, open questions
+- **`src/nameless/core/subconscious.md`** — Nameless's own design writing on inner monologue
 
 ## Notes
 
@@ -167,3 +176,34 @@ When working in this repo, remember you're helping build infrastructure for an a
 load eagerly (no ToolSearch required). This is fine while the tool count is small (~6 tools,
 ~500-1000 tokens). When significantly more MCP tools are added, switch to `"auto"` or `"true"`
 to use progressive disclosure and keep context lean.
+
+### Running in a Remote / Web Session
+
+When working on Nameless from Claude Code on the web (or any environment that isn't
+Jake's laptop), be aware of what **won't work directly**:
+
+- **No Docker**: Can't start or access the local Letta server (`docker compose up`).
+  The agent loop, perch time, and any tool that hits `localhost:8283` will fail.
+- **No system Claude CLI**: The `shutil.which("claude")` path won't resolve. The
+  SDK's bundled CLI may work if an `ANTHROPIC_API_KEY` is set, but OAuth/Max auth
+  won't be available.
+- **No cron**: Can't test `nameless-cron` or perch time cycles.
+- **No macOS Keychain**: OAuth tokens aren't available outside Jake's machine.
+
+What **does work** in a remote session:
+
+- **Read/edit all code**: Full codebase access for design, refactoring, review.
+- **Run tests**: `uv run pytest` works for unit tests (most use mocks, not a live
+  Letta server). Integration tests that need Letta will be skipped/fail.
+- **Design and plan**: Review design docs, write new ones, plan architecture.
+- **Write new tools/triggers**: Implement code that will be tested on the laptop.
+- **Letta API** (if accessible): If the Letta server is exposed via tunnel or
+  deployed remotely, you can set `LETTA_BASE_URL` accordingly.
+
+To set up for a remote session, you'd minimally need:
+```bash
+uv sync                          # install Python deps
+export LETTA_BASE_URL=...        # if Letta is reachable
+export NAMELESS_AGENT_ID=...     # from .env on laptop
+# ANTHROPIC_API_KEY only needed if not using OAuth
+```
