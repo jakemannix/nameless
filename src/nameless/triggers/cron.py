@@ -128,6 +128,44 @@ def letta_healthy(timeout: float = 5.0) -> bool:
         return False
 
 
+# Project root where docker-compose.yml lives
+PROJECT_DIR = Path(__file__).resolve().parents[3]
+
+
+def ensure_letta_running(retries: int = 3, wait: float = 10.0) -> bool:
+    """Ensure the Letta server is running, starting it if needed.
+
+    Returns True if the server is healthy, False if it couldn't be started.
+    """
+    if letta_healthy():
+        return True
+
+    logger.info("Letta server not reachable, attempting docker compose up")
+    try:
+        import subprocess
+
+        subprocess.run(
+            ["docker", "compose", "up", "-d"],
+            cwd=PROJECT_DIR,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception as e:
+        logger.warning("Failed to start Letta via docker compose: %s", e)
+        return False
+
+    # Wait for the server to come up
+    for attempt in range(retries):
+        time.sleep(wait)
+        if letta_healthy():
+            logger.info("Letta server is now healthy")
+            return True
+        logger.info("Waiting for Letta server (attempt %d/%d)", attempt + 1, retries)
+
+    logger.warning("Letta server did not become healthy after docker compose up")
+    return False
+
+
 def perch_time() -> None:
     """Execute a perch time cycle.
 
@@ -139,8 +177,8 @@ def perch_time() -> None:
 
     See /src/nameless/core/subconscious.md for design rationale.
     """
-    if not letta_healthy():
-        logger.warning("Letta server not reachable, skipping perch")
+    if not ensure_letta_running():
+        logger.warning("Letta server unavailable, skipping perch")
         return
 
     # Import here to avoid loading heavy deps unless actually perching

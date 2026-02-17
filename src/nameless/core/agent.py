@@ -446,7 +446,11 @@ class NamelessAgent:
             disallowed_tools=["Task", "Agent", "TaskOutput", "mcp__claude_ai_*"],
             # Load all MCP tools eagerly — only 6 Letta tools, well within
             # context budget. Avoids requiring ToolSearch for primary tools.
-            env={"ENABLE_TOOL_SEARCH": "false"},
+            env={
+                "ENABLE_TOOL_SEARCH": "false",
+                # Unset depleted API key so Claude Code uses Max credits
+                "ANTHROPIC_API_KEY": "",
+            },
             # Programmatic permission: approve APPROVED_TOOLS, deny all else
             can_use_tool=_check_tool_permission,
         )
