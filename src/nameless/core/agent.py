@@ -9,6 +9,7 @@ prompt structure that Letta's server builds natively.
 """
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -448,8 +449,6 @@ class NamelessAgent:
             # context budget. Avoids requiring ToolSearch for primary tools.
             env={
                 "ENABLE_TOOL_SEARCH": "false",
-                # Unset depleted API key so Claude Code uses Max credits
-                "ANTHROPIC_API_KEY": "",
             },
             # Programmatic permission: approve APPROVED_TOOLS, deny all else
             can_use_tool=_check_tool_permission,
@@ -470,6 +469,11 @@ class NamelessAgent:
         Yields:
             Response messages from the agent.
         """
+        # Remove ANTHROPIC_API_KEY from env so the CLI subprocess doesn't
+        # see it. Empty string is treated as "present but invalid", not
+        # "absent" — must be fully removed to fall through to OAuth/Max.
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
         # Build system prompt if not provided
         system_prompt = self.system_prompt
         if system_prompt is None:
