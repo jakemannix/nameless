@@ -10,6 +10,7 @@ prompt structure that Letta's server builds natively.
 
 import logging
 import os
+import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -431,8 +432,18 @@ class NamelessAgent:
             agent_id=self.agent_id,
         )
 
+        # Find system-installed Claude CLI instead of bundled version.
+        # The bundled CLI (v2.1.23) doesn't support macOS Keychain OAuth;
+        # system CLI (v2.1.44+) does, which is required for Max subscription.
+        cli_path = shutil.which("claude")
+        if cli_path:
+            logger.info("Using system Claude CLI: %s", cli_path)
+        else:
+            logger.warning("System Claude CLI not found, falling back to bundled")
+
         return ClaudeAgentOptions(
             system_prompt=system_prompt,
+            cli_path=cli_path,  # Use system CLI for OAuth support
             mcp_servers={"letta": mcp_server},
             # allowed_tools is additive — permits MCP tools beyond the base set
             allowed_tools=[
