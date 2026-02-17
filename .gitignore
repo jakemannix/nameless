@@ -9,6 +9,11 @@ yarn-error.log*
 # Agent exports
 exports/
 
+# Claude Code session state
+.claude.json
+.claude.json.backup.*
+.claude/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
